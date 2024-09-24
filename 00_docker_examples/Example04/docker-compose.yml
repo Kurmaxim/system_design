@@ -1,0 +1,57 @@
+version: '2.1'
+
+services:
+  db-node-1:
+    build:
+      context: mysql
+      dockerfile: Dockerfile
+    container_name: db-node-1
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: archdb
+      MYSQL_USER: stud
+      MYSQL_PASSWORD: stud
+      MYSQL_ROOT_PASSWORD: '1'
+    command: >
+      --sql-mode='STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'
+      --general-log=ON
+      --log-queries-not-using-indexes=ON
+
+    healthcheck:
+      test: "/usr/bin/mariadb --user=stud --password=stud --execute \"SHOW DATABASES;\""
+      interval: 15s
+      timeout: 1s
+      retries: 5
+    ports:
+      - 3306:3306
+    volumes:
+      - db-node-1-data:/var/lib/mysql
+    networks:
+      vpcbr:
+        ipv4_address: 10.5.0.5
+
+  sql_test:
+      container_name: sql_test_main
+      build:
+        context: ./myserver
+      command: 10.5.0.5 3306
+      depends_on:
+        db-node-1:
+          condition: service_healthy
+      
+      networks:
+        vpcbr:
+          ipv4_address: 10.5.0.6
+volumes:
+  db-node-1-data:
+
+networks:
+  vpcbr:
+    driver: bridge
+    ipam:
+     config:
+       - subnet: 10.5.0.0/16
+
+
+
+
