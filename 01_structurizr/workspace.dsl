@@ -6,15 +6,13 @@ workspace {
     !identifiers hierarchical
 
     model {
-        // !include export_tools/sparx_to_structurizr/bss_landscape.dsl
-        // !include export_tools/sparx_to_structurizr/ess_landscape.dsl
-        //!include landscape_model.dsl
         !include model.dsl 
         !include deployment_model.dsl  
     }
 
     views {
-        
+        themes default
+
         systemLandscape "SystemLandscape"{
             include *
             autoLayout lr
@@ -32,7 +30,7 @@ workspace {
         
         component guard_system.billing "Billing"{
             include *
-            autoLayout tb
+            autoLayout lr
             animation {
                 guard_system.bpm
                 guard_system.tracker
