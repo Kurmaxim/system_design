@@ -26,9 +26,7 @@ users_db = []
 
 # Псевдо-база данных пользователей
 client_db = {
-    "admin": {
-        "hashed_password": "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW"  # hashed "secret"
-    }
+    "admin":  "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW"  # hashed "secret"
 }
 
 # Настройка паролей
@@ -36,32 +34,6 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # Настройка OAuth2
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
-# Создание и проверка JWT токенов
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
-
-# Получение пользователя из псевдо-базы данных
-def get_client(username: str) -> dict:
-    if username in client_db:
-        client_dict = client_db[username]
-        return client_dict
-
-# Аутентификация пользователя
-def authenticate_client(username: str, password: str):
-    client = get_client(username)
-    if not client:
-        return False
-    if not pwd_context.verify(password, client['hashed_password']):
-        return False
-    return client
 
 # Зависимости для получения текущего пользователя
 async def get_current_client(token: str = Depends(oauth2_scheme)):
@@ -75,38 +47,50 @@ async def get_current_client(token: str = Depends(oauth2_scheme)):
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
+        else:
+            return username
     except JWTError:
-        print('jwt error')
         raise credentials_exception
-    user = get_client(username=username)
-    if user is None:
-        raise credentials_exception
-    return user
+
+# Создание и проверка JWT токенов
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
 
 # Маршрут для получения токена
 @app.post("/token")
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = authenticate_client(form_data.username, form_data.password)
-    if not user:
+    password_check = False
+    if form_data.username in client_db:
+        password = client_db[form_data.username]
+        if pwd_context.verify(form_data.password, password):
+            password_check = True
+
+    if password_check:
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = create_access_token(data={"sub": form_data.username}, expires_delta=access_token_expires)
+        return {"access_token": access_token, "token_type": "bearer"}
+    else:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": form_data.username}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
 
 # GET /users - Получить всех пользователей (требует аутентификации)
 @app.get("/users", response_model=List[User])
-def get_users(current_user: dict = Depends(get_current_client)):
+def get_users(current_user: str = Depends(get_current_client)):
     return users_db
 
 # GET /users/{user_id} - Получить пользователя по ID (требует аутентификации)
 @app.get("/users/{user_id}", response_model=User)
-def get_user(user_id: int, current_user: dict = Depends(get_current_client)):
+def get_user(user_id: int, current_user: str = Depends(get_current_client)):
     for user in users_db:
         if user.id == user_id:
             return user
@@ -114,7 +98,7 @@ def get_user(user_id: int, current_user: dict = Depends(get_current_client)):
 
 # POST /users - Создать нового пользователя (требует аутентификации)
 @app.post("/users", response_model=User)
-def create_user(user: User, current_user: dict = Depends(get_current_client)):
+def create_user(user: User, current_user: str = Depends(get_current_client)):
     for u in users_db:
         if u.id == user.id:
             raise HTTPException(status_code=404, detail="User already exist")
@@ -123,7 +107,7 @@ def create_user(user: User, current_user: dict = Depends(get_current_client)):
 
 # PUT /users/{user_id} - Обновить пользователя по ID (требует аутентификации)
 @app.put("/users/{user_id}", response_model=User)
-def update_user(user_id: int, updated_user: User, current_user: dict = Depends(get_current_client)):
+def update_user(user_id: int, updated_user: User, current_user: str = Depends(get_current_client)):
     for index, user in enumerate(users_db):
         if user.id == user_id:
             users_db[index] = updated_user
@@ -132,7 +116,7 @@ def update_user(user_id: int, updated_user: User, current_user: dict = Depends(g
 
 # DELETE /users/{user_id} - Удалить пользователя по ID (требует аутентификации)
 @app.delete("/users/{user_id}", response_model=User)
-def delete_user(user_id: int, current_user: dict = Depends(get_current_client)):
+def delete_user(user_id: int, current_user: str = Depends(get_current_client)):
     for index, user in enumerate(users_db):
         if user.id == user_id:
             deleted_user = users_db.pop(index)
@@ -142,28 +126,6 @@ def delete_user(user_id: int, current_user: dict = Depends(get_current_client)):
 # Запуск сервера
 # http://localhost:8000/openapi.json swagger
 # http://localhost:8000/docs портал документации
-
-
-# Примеры запросов:
-# POST /token: Получить токен для аутентификации.
-# json
-# {
-#   "username": "johndoe",
-#   "password": "secret"
-# }
-# GET /users: Получить всех пользователей (требует токен).
-
-# GET /users/{user_id}: Получить пользователя по ID (требует токен).
-# POST /users: Создать нового пользователя (требует токен).
-# PUT /users/{user_id}: Обновить пользователя по ID (требует токен).
-# {
-#   "id": 2,
-#   "username": "janedoe",
-#   "email": "janedoe@example.com",
-#   "hashed_password": "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW",  # hashed "secret"
-#   "age": 26
-# }
-# DELETE /users/{user_id}: Удалить пользователя по ID (требует токен).
 
 if __name__ == "__main__":
     import uvicorn
