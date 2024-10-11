@@ -25,13 +25,9 @@ class User(BaseModel):
 users_db = []
 
 # Псевдо-база данных пользователей
-fake_users_db = {
-    "johndoe": {
-        "id": 1,
-        "username": "johndoe",
-        "email": "johndoe@example.com",
-        "hashed_password": "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW",  # hashed "secret"
-        "age": 30,
+client_db = {
+    "admin": {
+        "hashed_password": "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW"  # hashed "secret"
     }
 }
 
@@ -53,22 +49,22 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 # Получение пользователя из псевдо-базы данных
-def get_user_from_db(fake_db, username: str):
-    if username in fake_db:
-        user_dict = fake_db[username]
-        return User(**user_dict)
+def get_client(username: str) -> dict:
+    if username in client_db:
+        client_dict = client_db[username]
+        return client_dict
 
 # Аутентификация пользователя
-def authenticate_user(fake_db, username: str, password: str):
-    user = get_user_from_db(fake_db, username)
-    if not user:
+def authenticate_client(username: str, password: str):
+    client = get_client(username)
+    if not client:
         return False
-    if not pwd_context.verify(password, user.hashed_password):
+    if not pwd_context.verify(password, client['hashed_password']):
         return False
-    return user
+    return client
 
 # Зависимости для получения текущего пользователя
-async def get_current_user(token: str = Depends(oauth2_scheme)):
+async def get_current_client(token: str = Depends(oauth2_scheme)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -82,7 +78,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
     except JWTError:
         print('jwt error')
         raise credentials_exception
-    user = get_user_from_db(fake_users_db, username=username)
+    user = get_client(username=username)
     if user is None:
         raise credentials_exception
     return user
@@ -90,7 +86,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
 # Маршрут для получения токена
 @app.post("/token")
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = authenticate_user(fake_users_db, form_data.username, form_data.password)
+    user = authenticate_client(form_data.username, form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -99,18 +95,18 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         )
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
+        data={"sub": form_data.username}, expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
 # GET /users - Получить всех пользователей (требует аутентификации)
 @app.get("/users", response_model=List[User])
-def get_users(current_user: User = Depends(get_current_user)):
+def get_users(current_user: dict = Depends(get_current_client)):
     return users_db
 
 # GET /users/{user_id} - Получить пользователя по ID (требует аутентификации)
 @app.get("/users/{user_id}", response_model=User)
-def get_user(user_id: int, current_user: User = Depends(get_current_user)):
+def get_user(user_id: int, current_user: dict = Depends(get_current_client)):
     for user in users_db:
         if user.id == user_id:
             return user
@@ -118,13 +114,16 @@ def get_user(user_id: int, current_user: User = Depends(get_current_user)):
 
 # POST /users - Создать нового пользователя (требует аутентификации)
 @app.post("/users", response_model=User)
-def create_user(user: User, current_user: User = Depends(get_current_user)):
+def create_user(user: User, current_user: dict = Depends(get_current_client)):
+    for u in users_db:
+        if u.id == user.id:
+            raise HTTPException(status_code=404, detail="User already exist")
     users_db.append(user)
     return user
 
 # PUT /users/{user_id} - Обновить пользователя по ID (требует аутентификации)
 @app.put("/users/{user_id}", response_model=User)
-def update_user(user_id: int, updated_user: User, current_user: User = Depends(get_current_user)):
+def update_user(user_id: int, updated_user: User, current_user: dict = Depends(get_current_client)):
     for index, user in enumerate(users_db):
         if user.id == user_id:
             users_db[index] = updated_user
@@ -133,7 +132,7 @@ def update_user(user_id: int, updated_user: User, current_user: User = Depends(g
 
 # DELETE /users/{user_id} - Удалить пользователя по ID (требует аутентификации)
 @app.delete("/users/{user_id}", response_model=User)
-def delete_user(user_id: int, current_user: User = Depends(get_current_user)):
+def delete_user(user_id: int, current_user: dict = Depends(get_current_client)):
     for index, user in enumerate(users_db):
         if user.id == user_id:
             deleted_user = users_db.pop(index)

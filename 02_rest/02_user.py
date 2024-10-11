@@ -30,6 +30,11 @@ def get_user(user_id: int):
 # POST /users - Создать нового пользователя
 @app.post("/users", response_model=User)
 def create_user(user: User):
+
+    for u in users_db:
+        if u.id == user.id:
+            raise HTTPException(status_code=404, detail="User already exist")
+
     users_db.append(user)
     return user
 
