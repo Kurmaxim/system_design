@@ -2,6 +2,7 @@ fastapi
 pydantic
 uvicorn[standard]
 sqlalchemy
+pandas
 psycopg2-binary
 redis
 pymongo
