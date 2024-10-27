@@ -5,14 +5,14 @@ CREATE TABLE IF NOT EXISTS Author (id INT NOT NULL,first_name VARCHAR(256),last_
 \dt+
 
 # create sequence
-CREATE SEQUENCE IF NOT EXISTS Ids START 1
+CREATE SEQUENCE IF NOT EXISTS author_id_seq START 1
 
 SELECT * from Author;
 
-select NEXTVAL('ids');
+select NEXTVAL('author_id_seq');
 
 INSERT INTO Author(id,first_name,last_name,email,title) 
-VALUES ( NEXTVAL('ids'),'Petr','Petrov','pp@yandex.ru','mr');
+VALUES ( NEXTVAL('author_id_seq'),'Petr','Petrov','pp@yandex.ru','mr');
 
 INSERT INTO Author(id,first_name,last_name,email,title) VALUES ( NEXTVAL('ids'),'Andr','Ezhoff','pp@yandex.
 ru','mr');
@@ -39,4 +39,4 @@ SELECT * FROM Author WHERE first_name LIKE 'P%' OR last_name LIKE 'E%';
 
 
 create index users_fn_ln on Users(first_name text_pattern_ops, last_name text_pattern_ops);
-explain (analyze) select * from Users where first_name ^@ 'Car%' and last_name ^@ 'L%';
+explain (analyze) select * from Users where first_name like 'Car%' and last_name like 'L%';
