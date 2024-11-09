@@ -10,4 +10,5 @@ pyjwt
 python-jose[cryptography] 
 passlib[bcrypt]
 python-multipart
+prometheus_client
 

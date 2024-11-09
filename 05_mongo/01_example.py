@@ -6,9 +6,9 @@ db = client['mydatabase']  # Specify the database name
 collection = db['mycollection']  # Specify the collection name
 
 document = {
-    'name': 'Jane Doe',
-    'age': 30,
-    'email': 'janedoe@example.com'
+    'name': 'Jirome K Jirome',
+    'age': 10,
+    'email': 'kj@example.com'
 }
 # Insert the document into the collection 
 

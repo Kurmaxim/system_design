@@ -58,6 +58,24 @@ services:
     networks:
       - my_network
 
+  grafana-01:
+    image: grafana/grafana
+    container_name: grafana-01
+    ports:
+      - 3000:3000
+    networks:
+      - my_network
+  
+  prometheus-01:
+    image: prom/prometheus
+    container_name: prometheus-01
+    ports:
+      - 9090:9090
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - my_network
+
 networks:
   my_network:
 volumes:
