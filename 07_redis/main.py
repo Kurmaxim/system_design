@@ -8,7 +8,7 @@ import redis
 import json
 
 # Настройка SQLAlchemy
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@db/postgres")
+DATABASE_URL = "postgresql://stud:stud@db/archdb"
 engine = create_engine(DATABASE_URL)
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://cache:6379/0")
@@ -64,7 +64,7 @@ def create_user(user: UserCreate, db: Session = Depends(get_db), tags=["Users"])
 def get_user(user_id: int, db: Session = Depends(get_db)):
     cache_key = f"user:{user_id}"
     if redis_client.exists(cache_key):
-        print('# from_cache')
+        #print('# from_cache')
         cached_user = redis_client.get(cache_key)
         return json.loads(cached_user)
     else:
@@ -75,7 +75,8 @@ def get_user(user_id: int, db: Session = Depends(get_db)):
                 user_json[k] = user.__dict__[k]
 
         if user:
-            redis_client.set(cache_key, json.dumps(user_json),ex = 60)
+            redis_client.set(cache_key, json.dumps(user_json),ex = 180)
+            pass
         else:
             raise HTTPException(status_code=404, detail="User not found")
         return user
