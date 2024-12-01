@@ -12,3 +12,5 @@ passlib[bcrypt]
 python-multipart
 prometheus_client
 requests
+pika
+confluent-kafka
