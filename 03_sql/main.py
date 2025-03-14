@@ -1,43 +1,60 @@
-from fastapi import FastAPI, Depends, HTTPException
-from sqlalchemy import create_engine, Column, Integer, String
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session
+from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
-import os
+from typing import List, Optional
+from datetime import datetime, timedelta
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from sqlalchemy.orm import Session
+from database import SessionLocal, User, Goal, Task
+from sqlalchemy.exc import IntegrityError
+import uuid
 
-# Настройка SQLAlchemy
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@db/postgres")
-engine = create_engine(DATABASE_URL)
-
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-# Модель SQLAlchemy
-class User(Base):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    first_name = Column(String, index=True)
-    last_name = Column(String, index=True)
-
-# Создание таблиц
-Base.metadata.create_all(bind=engine)
-
-# Модель Pydantic для валидации данных
-class UserCreate(BaseModel):
-    first_name: str
-    last_name: str
-
-class UserResponse(BaseModel):
-    id: int
-    first_name: str
-    last_name: str
-
-    class Config:
-        orm_mode = True
+SECRET_KEY = "your-secret-key"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 app = FastAPI()
 
-# Зависимости для получения сессии базы данных
+class UserCreate(BaseModel):
+    username: str
+    email: str
+    password: str
+    first_name: str
+    last_name: str
+    age: Optional[int] = None
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    email: str
+    first_name: str
+    last_name: str
+    age: Optional[int] = None
+
+class GoalCreate(BaseModel):
+    description: str
+
+class GoalResponse(BaseModel):
+    id: str
+    description: str
+    owner_id: int
+
+class TaskCreate(BaseModel):
+    description: str
+    assignee_id: int
+
+class TaskResponse(BaseModel):
+    id: str
+    description: str
+    status: str
+    goal_id: str
+    assignee_id: int
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
 def get_db():
     db = SessionLocal()
     try:
@@ -45,30 +62,192 @@ def get_db():
     finally:
         db.close()
 
-# Маршрут для создания пользователя
-@app.post("/users/", response_model=UserResponse)
-def create_user(user: UserCreate, db: Session = Depends(get_db), tags=["Users"]):
-    db_user = User(**user.dict())
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
-    return db_user
+async def get_current_client(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            raise credentials_exception
+        user = db.query(User).filter(User.username == username).first()
+        if user is None:
+            raise credentials_exception
+        return user
+    except JWTError:
+        raise credentials_exception
 
-# Маршрут для получения пользователя по id
-@app.get("/users/{user_id}", response_model=UserResponse, tags=["Users"])
-def get_user(user_id: int, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.id == user_id).first()
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    return user
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=15)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
 
-# Маршрут для получения всех пользователей
-@app.get("/users/", response_model=list[UserResponse], tags=["Users"])
-def get_all_users(db: Session = Depends(get_db)):
-    users = db.query(User).all()
-    return users
+@app.post("/token")
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    try:
+        user = db.query(User).filter(User.username == form_data.username).first()
+        if user and pwd_context.verify(form_data.password, user.hashed_password):
+            access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+            access_token = create_access_token(data={"sub": user.username}, expires_delta=access_token_expires)
+            return {"access_token": access_token, "token_type": "bearer"}
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect username or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
-# Запуск сервера
+@app.get("/users", response_model=List[UserResponse])
+def get_users(current_user: User = Depends(get_current_client), db: Session = Depends(get_db)):
+    try:
+        return db.query(User).all()
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+@app.post("/users", response_model=UserResponse)
+def create_user(user: UserCreate, current_user: User = Depends(get_current_client), db: Session = Depends(get_db)):
+    try:
+        existing_user = db.query(User).filter(
+            (User.username == user.username) | (User.email == user.email)
+        ).first()
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username or email already exists"
+            )
+
+        hashed_password = pwd_context.hash(user.password)
+
+        db_user = User(
+            username=user.username,
+            email=user.email,
+            hashed_password=hashed_password,
+            first_name=user.first_name,
+            last_name=user.last_name,
+            age=user.age
+        )
+        db.add(db_user)
+        db.commit()
+        db.refresh(db_user)
+        return db_user
+
+    except IntegrityError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username or email already exists"
+        )
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+@app.get("/users/search", response_model=List[UserResponse])
+def search_users(query: str, current_user: User = Depends(get_current_client), db: Session = Depends(get_db)):
+    try:
+        users = db.query(User).filter(
+            (User.first_name.ilike(f"%{query}%")) | (User.last_name.ilike(f"%{query}%"))
+        ).all()
+        return users
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+@app.get("/users/{user_id}", response_model=UserResponse)
+def get_user(user_id: int, current_user: User = Depends(get_current_client), db: Session = Depends(get_db)):
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        return user
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+@app.post("/goals", response_model=GoalResponse)
+def create_goal(goal: GoalCreate, current_user: User = Depends(get_current_client), db: Session = Depends(get_db)):
+    try:
+        db_goal = Goal(
+            id=str(uuid.uuid4()),
+            description=goal.description,
+            owner_id=current_user.id
+        )
+        db.add(db_goal)
+        db.commit()
+        db.refresh(db_goal)
+        return db_goal
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+@app.get("/goals", response_model=List[GoalResponse])
+def get_goals(current_user: User = Depends(get_current_client), db: Session = Depends(get_db)):
+    try:
+        return db.query(Goal).filter(Goal.owner_id == current_user.id).all()
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+@app.post("/goals/{goal_id}/tasks", response_model=TaskResponse)
+def create_task(
+    goal_id: str, 
+    task: TaskCreate, 
+    current_user: User = Depends(get_current_client),
+    db: Session = Depends(get_db)
+):
+    try:
+        goal = db.query(Goal).filter(Goal.id == goal_id).first()
+        if not goal:
+            raise HTTPException(status_code=404, detail="Goal not found")
+
+        assignee = db.query(User).filter(User.id == task.assignee_id).first()
+        if not assignee:
+            raise HTTPException(status_code=404, detail="Assignee not found")
+
+        db_task = Task(
+            id=str(uuid.uuid4()),
+            description=task.description,
+            goal_id=goal_id, 
+            assignee_id=task.assignee_id
+        )
+        db.add(db_task)
+        db.commit()
+        db.refresh(db_task)
+        return db_task
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+@app.get("/goals/{goal_id}/tasks", response_model=List[TaskResponse])
+def get_tasks(goal_id: str, current_user: User = Depends(get_current_client), db: Session = Depends(get_db)):
+    try:
+        return db.query(Task).filter(Task.goal_id == goal_id).all()
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+@app.put("/tasks/{task_id}", response_model=TaskResponse)
+def update_task_status(task_id: str, status: str, current_user: User = Depends(get_current_client), db: Session = Depends(get_db)):
+    try:
+        db_task = db.query(Task).filter(Task.id == task_id).first()
+        if db_task is None:
+            raise HTTPException(status_code=404, detail="Task not found")
+        db_task.status = status
+        db.commit()
+        db.refresh(db_task)
+        return db_task
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

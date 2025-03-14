@@ -19,6 +19,11 @@ RUN apt-get update && apt-get install -y \
     iputils-ping \
     postgresql \ 
     postgresql-contrib \
+    libxrender1 \
+    libxtst6 \
+    libxi6 \
+    fontconfig \
+    fonts-dejavu \
     && rm -rf /var/lib/apt/lists/*
 
 # Копируем зависимости
